@@ -4,7 +4,7 @@ WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0
 RUN go mod download
-RUN go build -v -o XrayR -trimpath -ldflags "-s -w -buildid="
+RUN go build -v -o XrayR -tags with_quic -trimpath -ldflags "-s -w -buildid="
 
 # Release
 FROM  alpine
