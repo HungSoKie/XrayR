@@ -52,7 +52,7 @@ func (h *Hysteria2Service) buildServerConfig() (*server.Config, error) {
 		ob, err := obfs.NewSalamanderObfuscator([]byte(hy.ObfsPassword))
 		if err != nil {
 			udpConn.Close()
-			return nil, fmt.Errorf("create salamander obfs: %w", err)
+			return nil, fmt.Errorf("failed to create salamander obfuscator")
 		}
 		packetConn = obfs.WrapPacketConn(udpConn, ob)
 	case "", "none", "plain":

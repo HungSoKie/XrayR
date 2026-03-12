@@ -405,8 +405,21 @@ func (c *APIClient) ReportIllegal(detectResultList *[]api.DetectResult) error {
 // ParseTrojanNodeResponse parse the response for the given nodeInfo format
 func (c *APIClient) ParseTrojanNodeResponse(nodeInfoResponse *simplejson.Json) (*api.NodeInfo, error) {
 	tmpInboundInfo := nodeInfoResponse.Get("inbounds").MustArray()
-	marshalByte, _ := json.Marshal(tmpInboundInfo[0].(map[string]interface{}))
-	inboundInfo, _ := simplejson.NewJson(marshalByte)
+	if len(tmpInboundInfo) == 0 {
+		return nil, fmt.Errorf("no inbound info in response")
+	}
+	inboundMap, ok := tmpInboundInfo[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid inbound info format")
+	}
+	marshalByte, err := json.Marshal(inboundMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshal inbound info: %w", err)
+	}
+	inboundInfo, err := simplejson.NewJson(marshalByte)
+	if err != nil {
+		return nil, fmt.Errorf("parse inbound info: %w", err)
+	}
 
 	port := uint32(inboundInfo.Get("port").MustUint64())
 	host := inboundInfo.Get("streamSettings").Get("tlsSettings").Get("serverName").MustString()
@@ -427,8 +440,21 @@ func (c *APIClient) ParseTrojanNodeResponse(nodeInfoResponse *simplejson.Json) (
 func (c *APIClient) ParseSSNodeResponse(nodeInfoResponse *simplejson.Json) (*api.NodeInfo, error) {
 	var method, serverPsk string
 	tmpInboundInfo := nodeInfoResponse.Get("inbounds").MustArray()
-	marshalByte, _ := json.Marshal(tmpInboundInfo[0].(map[string]interface{}))
-	inboundInfo, _ := simplejson.NewJson(marshalByte)
+	if len(tmpInboundInfo) == 0 {
+		return nil, fmt.Errorf("no inbound info in response")
+	}
+	inboundMap, ok := tmpInboundInfo[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid inbound info format")
+	}
+	marshalByte, err := json.Marshal(inboundMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshal inbound info: %w", err)
+	}
+	inboundInfo, err := simplejson.NewJson(marshalByte)
+	if err != nil {
+		return nil, fmt.Errorf("parse inbound info: %w", err)
+	}
 
 	port := uint32(inboundInfo.Get("port").MustUint64())
 	method = inboundInfo.Get("settings").Get("method").MustString()
@@ -460,8 +486,21 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *simplejson.Json) (*
 	var vlessFlow string
 
 	tmpInboundInfo := nodeInfoResponse.Get("inbounds").MustArray()
-	marshalByte, _ := json.Marshal(tmpInboundInfo[0].(map[string]interface{}))
-	inboundInfo, _ := simplejson.NewJson(marshalByte)
+	if len(tmpInboundInfo) == 0 {
+		return nil, fmt.Errorf("no inbound info in response")
+	}
+	inboundMap, ok := tmpInboundInfo[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid inbound info format")
+	}
+	marshalByte, err := json.Marshal(inboundMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshal inbound info: %w", err)
+	}
+	inboundInfo, err := simplejson.NewJson(marshalByte)
+	if err != nil {
+		return nil, fmt.Errorf("parse inbound info: %w", err)
+	}
 
 	port := uint32(inboundInfo.Get("port").MustUint64())
 	transportProtocol := inboundInfo.Get("streamSettings").Get("network").MustString()
