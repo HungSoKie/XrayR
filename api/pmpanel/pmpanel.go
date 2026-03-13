@@ -277,6 +277,12 @@ func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) erro
 	return nil
 }
 
+// GetAliveList implements the API interface
+func (c *APIClient) GetAliveList() (aliveList map[int][]string, err error) {
+	// PMPanel does not support alivelist endpoint
+	return nil, nil
+}
+
 // ReportUserTraffic reports the user traffic
 func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 	var nodeType = ""

@@ -211,6 +211,11 @@ func (c *APIClient) ReportNodeStatus(nodeStatus *api.NodeStatus) (err error) {
 	return
 }
 
+// GetAliveList implements api.API
+func (c *APIClient) GetAliveList() (aliveList map[int][]string, err error) {
+	return nil, nil
+}
+
 func (c *APIClient) ReportNodeOnlineUsers(onlineUser *[]api.OnlineUser) (err error) {
 	return
 }

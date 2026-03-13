@@ -287,6 +287,11 @@ func (c *Controller) GetOnlineDevice(tag string) (*[]api.OnlineUser, error) {
 	return c.dispatcher.Limiter.GetOnlineDevice(tag)
 }
 
+func (c *Controller) SyncAliveList(tag string, aliveList map[int][]string) error {
+	err := c.dispatcher.Limiter.SyncAliveList(tag, aliveList)
+	return err
+}
+
 func (c *Controller) UpdateRule(tag string, newRuleList []api.DetectRule) error {
 	err := c.dispatcher.RuleManager.UpdateRule(tag, newRuleList)
 	return err

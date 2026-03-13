@@ -291,6 +291,41 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	return &userList, nil
 }
 
+// GetAliveList implements the API interface
+func (c *APIClient) GetAliveList() (aliveList map[int][]string, err error) {
+	path := "/api/v1/server/UniProxy/alivelist"
+
+	res, err := c.client.R().
+		ForceContentType("application/json").
+		Get(path)
+
+	aliveResp, err := c.parseResponse(res, path, err)
+	if err != nil {
+		return nil, err
+	}
+
+	aliveData := make(map[int][]string)
+	if alive := aliveResp.Get("alive"); alive != nil {
+		aliveMap, _ := alive.Map()
+		for uidStr, ips := range aliveMap {
+			var uidInt int
+			if _, err := fmt.Sscanf(uidStr, "%d", &uidInt); err == nil {
+				if ipList, ok := ips.([]interface{}); ok {
+					strIPs := make([]string, 0, len(ipList))
+					for _, ip := range ipList {
+						if ipStr, ok := ip.(string); ok {
+							strIPs = append(strIPs, ipStr)
+						}
+					}
+					aliveData[uidInt] = strIPs
+				}
+			}
+		}
+	}
+
+	return aliveData, nil
+}
+
 // ReportUserTraffic reports the user traffic
 func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 	path := "/api/v1/server/UniProxy/push"

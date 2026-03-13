@@ -265,6 +265,11 @@ func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) erro
 	return nil
 }
 
+// GetAliveList implements the API interface (not supported by BunPanel)
+func (c *APIClient) GetAliveList() (aliveList map[int][]string, err error) {
+	return nil, nil
+}
+
 func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 
 	data := make([]UserTraffic, len(*userTraffic))

@@ -4,6 +4,8 @@ package limiter
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,8 +38,8 @@ type connIP struct {
 // userOnlineEntry stores per-user IP tracking with an atomic device counter
 // to avoid O(N) Range() for device counting.
 type userOnlineEntry struct {
-	ips   sync.Map  // Key: IP string -> connIP
-	count int32     // atomic device count — avoids Range() for counting
+	ips   sync.Map // Key: IP string -> connIP
+	count int32    // atomic device count — avoids Range() for counting
 }
 
 func newUserOnlineEntry() *userOnlineEntry {
@@ -222,6 +224,67 @@ func (l *Limiter) GetOnlineDevice(tag string) (*[]api.OnlineUser, error) {
 		return &onlineUser, nil
 	}
 	return nil, fmt.Errorf("no such inbound in limiter: %s", tag)
+}
+
+// SyncAliveList synchronizes the alive list from panel to local tracking
+func (l *Limiter) SyncAliveList(tag string, aliveList map[int][]string) error {
+	if value, ok := l.InboundInfo.Load(tag); ok {
+		inboundInfo := value.(*InboundInfo)
+		now := time.Now().Unix()
+
+		// Build a map of panel IPs for quick lookup
+		panelIPs := make(map[string]map[string]bool)
+		for uid, ips := range aliveList {
+			uidStr := fmt.Sprintf("%d", uid)
+			panelIPs[uidStr] = make(map[string]bool)
+			for _, ip := range ips {
+				panelIPs[uidStr][ip] = true
+			}
+		}
+
+		// Sync local tracking with panel data
+		inboundInfo.UserOnlineIP.Range(func(userKey, value interface{}) bool {
+			entry := value.(*userOnlineEntry)
+			userKeyStr := userKey.(string)
+
+			// Extract UID from userKey (format: "tag|email|uid")
+			parts := strings.Split(userKeyStr, "|")
+			if len(parts) != 3 {
+				return true // Skip invalid format
+			}
+			uidStr := parts[2]
+
+			if uidStr != "" && panelIPs[uidStr] != nil {
+				// Parse UID to int for connIP struct
+				uidInt, err := strconv.Atoi(uidStr)
+				if err != nil {
+					return true // Skip if UID is not a valid integer
+				}
+
+				// Remove IPs not in panel list
+				entry.ips.Range(func(ip, val interface{}) bool {
+					ipStr := ip.(string)
+					if !panelIPs[uidStr][ipStr] {
+						entry.ips.Delete(ip)
+						atomic.AddInt32(&entry.count, -1)
+					}
+					return true
+				})
+
+				// Add IPs from panel that are missing locally
+				for ip := range panelIPs[uidStr] {
+					if _, exists := entry.ips.Load(ip); !exists {
+						entry.ips.Store(ip, connIP{UID: uidInt, LastSeen: now})
+						atomic.AddInt32(&entry.count, 1)
+					}
+				}
+			}
+			return true
+		})
+
+		return nil
+	}
+	return fmt.Errorf("no such inbound in limiter: %s", tag)
 }
 
 func (l *Limiter) GetUserBucket(tag string, userKey string, ip string) (limiter *rate.Limiter, SpeedLimit bool, Reject bool) {

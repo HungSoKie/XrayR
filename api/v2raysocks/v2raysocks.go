@@ -278,6 +278,11 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	return &userList, nil
 }
 
+// GetAliveList implements the API interface (not supported by V2RaySocks)
+func (c *APIClient) GetAliveList() (map[int][]string, error) {
+	return nil, nil
+}
+
 // ReportUserTraffic reports the user traffic
 func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 

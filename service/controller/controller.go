@@ -663,6 +663,13 @@ func (c *Controller) userInfoMonitor() (err error) {
 		}
 	}
 
+	// Sync alive list from panel for device limit accuracy
+	if aliveList, err := c.apiClient.GetAliveList(); err == nil && aliveList != nil && len(aliveList) > 0 {
+		if err := c.dispatcher.Limiter.SyncAliveList(c.Tag, aliveList); err != nil {
+			c.logger.Print(err)
+		}
+	}
+
 	// Report Illegal user
 	if detectResult, err := c.GetDetectResult(c.Tag); err != nil {
 		c.logger.Print(err)

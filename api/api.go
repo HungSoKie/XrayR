@@ -9,6 +9,7 @@ type API interface {
 	// GetXrayRCertConfig returns optional global certificate settings from panel
 	GetXrayRCertConfig() (certConfig *XrayRCertConfig, err error)
 	GetUserList() (userList *[]UserInfo, err error)
+	GetAliveList() (aliveList map[int][]string, err error)
 	ReportNodeStatus(nodeStatus *NodeStatus) (err error)
 	ReportNodeOnlineUsers(onlineUser *[]OnlineUser) (err error)
 	ReportUserTraffic(userTraffic *[]UserTraffic) (err error)
