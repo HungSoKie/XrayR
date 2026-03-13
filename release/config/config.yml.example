@@ -17,11 +17,11 @@ Nodes:
     ApiConfig:
       ApiHost: "http://127.0.0.1:667"
       ApiKey: "123"
-      NodeID: 41 # Single ID or comma-separated list, e.g. "41,42,43" for multiple logical nodes
+      NodeID: 41 # Single node ID (int). For multiple nodes, add multiple entries under Nodes.
       NodeType: V2ray # Node type: V2ray, Vmess, Vless, Shadowsocks, Trojan, Shadowsocks-Plugin, Hysteria2, Tuic, AnyTLS, Socks, HTTP
       Timeout: 30 # Timeout for the api request
       EnableVless: false # Enable Vless for V2ray Type
-      VlessFlow: "xtls-rprx-vision" # Only support vless
+      VlessFlow: "xtls-rprx-vision" # Only for direct TLS/REALITY over TCP. Keep empty for ws/grpc/httpupgrade/splithttp(xhttp).
       SpeedLimit: 0 # Mbps, Local settings will replace remote settings, 0 means disable
       DeviceLimit: 0 # Local settings will replace remote settings, 0 means disable
       RuleListPath: # /etc/XrayR/rulelist Path to local rulelist file
@@ -35,6 +35,7 @@ Nodes:
       DisableSniffing: false # Disable sniffing
       DisableUploadTraffic: false # Disable upload traffic reporting
       DisableGetRule: false # Disable fetching rules from panel
+      DisableIVCheck: false # Disable Shadowsocks IV check (legacy compatibility only; keep false unless required)
       EnableProxyProtocol: false # Only works for WebSocket and TCP
       AutoSpeedLimitConfig:
         Limit: 0 # Warned speed. Set to 0 to disable AutoSpeedLimit (mbps)
@@ -71,8 +72,10 @@ Nodes:
         ShortIds: # Required, list of available shortIds for the client, can be used to differentiate between different clients.
           - ""
           - 0123456789abcdef
-      # CertConfig is typically managed by the panel for SSPanel nodes. If you
-      # need to override locally, uncomment and fill the fields below:
+      # CertConfig:
+      # - Required for Hysteria2, Tuic, AnyTLS nodes.
+      # - For other node types, it is optional and can be managed by panel/local settings.
+      # Uncomment and fill the fields below when needed:
       # CertConfig:
       #   CertMode: dns # none, file, http, tls, dns
       #   CertDomain: "node1.test.com"
@@ -147,3 +150,57 @@ Nodes:
 #        DNSEnv: # DNS ENV option used by DNS provider
 #          ALICLOUD_ACCESS_KEY: aaa
 #          ALICLOUD_SECRET_KEY: bbb
+
+#  - PanelType: "NewV2board" # Example: Tuic node (Xboard/NewV2board)
+#    ApiConfig:
+#      ApiHost: "https://panel.example.com"
+#      ApiKey: "your_api_key"
+#      NodeID: 1
+#      NodeType: Tuic
+#      Timeout: 30
+#      RuleListPath: # /etc/XrayR/rulelist
+#    ControllerConfig:
+#      ListenIP: 0.0.0.0
+#      SendIP: 0.0.0.0
+#      UpdatePeriodic: 60
+#      DisableUploadTraffic: false
+#      DisableGetRule: false
+#      CertConfig: # Required for Tuic
+#        CertMode: file # none, file, http, tls, dns
+#        CertDomain: "tuic.example.com"
+#        CertFile: /etc/XrayR/cert/tuic.example.com.cert
+#        KeyFile: /etc/XrayR/cert/tuic.example.com.key
+
+#  - PanelType: "NewV2board" # Example: Hysteria2 node
+#    ApiConfig:
+#      ApiHost: "https://panel.example.com"
+#      ApiKey: "your_api_key"
+#      NodeID: 2
+#      NodeType: Hysteria2
+#      Timeout: 30
+#    ControllerConfig:
+#      ListenIP: 0.0.0.0
+#      SendIP: 0.0.0.0
+#      UpdatePeriodic: 60
+#      CertConfig: # Required for Hysteria2
+#        CertMode: file
+#        CertDomain: "hy2.example.com"
+#        CertFile: /etc/XrayR/cert/hy2.example.com.cert
+#        KeyFile: /etc/XrayR/cert/hy2.example.com.key
+
+#  - PanelType: "NewV2board" # Example: AnyTLS node
+#    ApiConfig:
+#      ApiHost: "https://panel.example.com"
+#      ApiKey: "your_api_key"
+#      NodeID: 3
+#      NodeType: AnyTLS
+#      Timeout: 30
+#    ControllerConfig:
+#      ListenIP: 0.0.0.0
+#      SendIP: 0.0.0.0
+#      UpdatePeriodic: 60
+#      CertConfig: # Required for AnyTLS
+#        CertMode: file
+#        CertDomain: "anytls.example.com"
+#        CertFile: /etc/XrayR/cert/anytls.example.com.cert
+#        KeyFile: /etc/XrayR/cert/anytls.example.com.key
