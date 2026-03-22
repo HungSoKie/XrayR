@@ -162,7 +162,7 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 	switch strings.ToLower(c.NodeType) {
 	case "v2ray", "vmess", "vless":
 		nodeType = "v2ray"
-	case "trojan", "shadowsocks":
+	case "trojan", "shadowsocks", "socks", "http":
 		nodeType = strings.ToLower(c.NodeType)
 	default:
 		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
@@ -193,13 +193,17 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 		return nil, err
 	}
 
-	switch c.NodeType {
-	case "V2ray", "Vmess", "Vless":
+	switch strings.ToLower(c.NodeType) {
+	case "v2ray", "vmess", "vless":
 		nodeInfo, err = c.ParseV2rayNodeResponse(response)
-	case "Trojan":
+	case "trojan":
 		nodeInfo, err = c.ParseTrojanNodeResponse(response)
-	case "Shadowsocks":
+	case "shadowsocks":
 		nodeInfo, err = c.ParseSSNodeResponse(response)
+	case "socks":
+		nodeInfo, err = c.ParseSocksNodeResponse(response)
+	case "http":
+		nodeInfo, err = c.ParseHTTPNodeResponse(response)
 	default:
 		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
 	}
@@ -214,8 +218,8 @@ func (c *APIClient) GetNodeInfo() (nodeInfo *api.NodeInfo, err error) {
 // GetUserList will pull user form panel
 func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	var nodeType string
-	switch c.NodeType {
-	case "V2ray", "Vmess", "Vless", "Trojan", "Shadowsocks":
+	switch strings.ToLower(c.NodeType) {
+	case "v2ray", "vmess", "vless", "trojan", "shadowsocks", "socks", "http":
 		nodeType = strings.ToLower(c.NodeType)
 	default:
 		return nil, fmt.Errorf("unsupported Node type: %s", c.NodeType)
@@ -247,21 +251,28 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 	for i := 0; i < numOfUsers; i++ {
 		user := api.UserInfo{}
 		user.UID = response.Get("data").GetIndex(i).Get("id").MustInt()
-		switch c.NodeType {
-		case "Shadowsocks":
+		switch strings.ToLower(c.NodeType) {
+		case "shadowsocks":
 			user.Email = response.Get("data").GetIndex(i).Get("secret").MustString()
 			user.Passwd = response.Get("data").GetIndex(i).Get("secret").MustString()
 			user.Method = response.Get("data").GetIndex(i).Get("cipher").MustString()
 			user.SpeedLimit = response.Get("data").GetIndex(i).Get("st").MustUint64() * 1000000 / 8
 			user.DeviceLimit = response.Get("data").GetIndex(i).Get("dt").MustInt()
-		case "Trojan":
+		case "trojan":
 			user.UUID = response.Get("data").GetIndex(i).Get("password").MustString()
 			user.Email = response.Get("data").GetIndex(i).Get("password").MustString()
 			user.SpeedLimit = response.Get("data").GetIndex(i).Get("st").MustUint64() * 1000000 / 8
 			user.DeviceLimit = response.Get("data").GetIndex(i).Get("dt").MustInt()
-		case "V2ray", "Vmess", "Vless":
+		case "v2ray", "vmess", "vless":
 			user.UUID = response.Get("data").GetIndex(i).Get("uuid").MustString()
 			user.Email = user.UUID + "@x.com"
+			user.SpeedLimit = response.Get("data").GetIndex(i).Get("st").MustUint64() * 1000000 / 8
+			user.DeviceLimit = response.Get("data").GetIndex(i).Get("dt").MustInt()
+		case "socks", "http":
+			credential := response.Get("data").GetIndex(i).Get("password").MustString()
+			user.UUID = credential
+			user.Email = credential
+			user.Passwd = credential
 			user.SpeedLimit = response.Get("data").GetIndex(i).Get("st").MustUint64() * 1000000 / 8
 			user.DeviceLimit = response.Get("data").GetIndex(i).Get("dt").MustInt()
 		}
@@ -317,6 +328,9 @@ func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	// fix: reuse config response
 	c.access.Lock()
 	defer c.access.Unlock()
+	if c.ConfigResp == nil {
+		return &ruleList, nil
+	}
 	ruleListResponse := c.ConfigResp.Get("routing").Get("rules").GetIndex(1).Get("domain").MustStringArray()
 	for i, rule := range ruleListResponse {
 		rule = strings.TrimPrefix(rule, "regexp:")
@@ -405,6 +419,31 @@ func (c *APIClient) ReportIllegal(detectResultList *[]api.DetectResult) error {
 		return err
 	}
 	return nil
+}
+
+// ParseSocksNodeResponse parses the simplified Socks node format returned by V2RaySocks.
+func (c *APIClient) ParseSocksNodeResponse(nodeInfoResponse *simplejson.Json) (*api.NodeInfo, error) {
+	port := uint32(nodeInfoResponse.Get("server_port").MustUint64())
+
+	return &api.NodeInfo{
+		NodeType:          "Socks",
+		NodeID:            c.NodeID,
+		Port:              port,
+		TransportProtocol: "tcp",
+	}, nil
+}
+
+// ParseHTTPNodeResponse parses the simplified HTTP node format returned by V2RaySocks.
+func (c *APIClient) ParseHTTPNodeResponse(nodeInfoResponse *simplejson.Json) (*api.NodeInfo, error) {
+	port := uint32(nodeInfoResponse.Get("server_port").MustUint64())
+
+	return &api.NodeInfo{
+		NodeType:          "HTTP",
+		NodeID:            c.NodeID,
+		Port:              port,
+		TransportProtocol: "tcp",
+		EnableTLS:         nodeInfoResponse.Get("tls").MustInt() == 1,
+	}, nil
 }
 
 // ParseTrojanNodeResponse parse the response for the given nodeInfo format
