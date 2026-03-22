@@ -422,9 +422,41 @@ func (c *APIClient) ReportIllegal(detectResultList *[]api.DetectResult) error {
 	return nil
 }
 
-// ParseSocksNodeResponse parses the simplified Socks node format returned by V2RaySocks.
+func inboundInfoByProtocol(nodeInfoResponse *simplejson.Json, protocol string) (*simplejson.Json, error) {
+	tmpInboundInfo := nodeInfoResponse.Get("inbounds").MustArray()
+	if len(tmpInboundInfo) == 0 {
+		return nil, fmt.Errorf("no inbound info in response")
+	}
+
+	for _, inbound := range tmpInboundInfo {
+		inboundMap, ok := inbound.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid inbound info format")
+		}
+		marshalByte, err := json.Marshal(inboundMap)
+		if err != nil {
+			return nil, fmt.Errorf("marshal inbound info: %w", err)
+		}
+		inboundInfo, err := simplejson.NewJson(marshalByte)
+		if err != nil {
+			return nil, fmt.Errorf("parse inbound info: %w", err)
+		}
+		if strings.EqualFold(inboundInfo.Get("protocol").MustString(), protocol) {
+			return inboundInfo, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no %s inbound info in response", protocol)
+}
+
+// ParseSocksNodeResponse parses the Socks node format returned by V2RaySocks.
 func (c *APIClient) ParseSocksNodeResponse(nodeInfoResponse *simplejson.Json) (*api.NodeInfo, error) {
 	port := uint32(nodeInfoResponse.Get("server_port").MustUint64())
+	if inboundInfo, err := inboundInfoByProtocol(nodeInfoResponse, "socks"); err == nil {
+		port = uint32(inboundInfo.Get("port").MustUint64())
+	} else if port == 0 {
+		return nil, err
+	}
 
 	return &api.NodeInfo{
 		NodeType:          "Socks",
@@ -434,16 +466,20 @@ func (c *APIClient) ParseSocksNodeResponse(nodeInfoResponse *simplejson.Json) (*
 	}, nil
 }
 
-// ParseHTTPNodeResponse parses the simplified HTTP node format returned by V2RaySocks.
+// ParseHTTPNodeResponse parses the HTTP node format returned by V2RaySocks.
 func (c *APIClient) ParseHTTPNodeResponse(nodeInfoResponse *simplejson.Json) (*api.NodeInfo, error) {
 	port := uint32(nodeInfoResponse.Get("server_port").MustUint64())
+	if inboundInfo, err := inboundInfoByProtocol(nodeInfoResponse, "http"); err == nil {
+		port = uint32(inboundInfo.Get("port").MustUint64())
+	} else if port == 0 {
+		return nil, err
+	}
 
 	return &api.NodeInfo{
 		NodeType:          "HTTP",
 		NodeID:            c.NodeID,
 		Port:              port,
 		TransportProtocol: "tcp",
-		EnableTLS:         nodeInfoResponse.Get("tls").MustInt() == 1,
 	}, nil
 }
 
