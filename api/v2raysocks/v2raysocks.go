@@ -549,16 +549,22 @@ func (c *APIClient) ParseV2rayNodeResponse(nodeInfoResponse *simplejson.Json) (*
 
 	realityConfig := new(api.REALITYConfig)
 	if enableVless {
+		reality := inboundInfo.Get("streamSettings").Get("realitySettings")
+		dest := reality.Get("dest").MustString()
+		if dest == "" {
+			dest = reality.Get("target").MustString()
+		}
+
 		// parse reality config
 		realityConfig = &api.REALITYConfig{
-			Dest:             inboundInfo.Get("streamSettings").Get("realitySettings").Get("dest").MustString(),
-			ProxyProtocolVer: inboundInfo.Get("streamSettings").Get("realitySettings").Get("xver").MustUint64(),
-			ServerNames:      inboundInfo.Get("streamSettings").Get("realitySettings").Get("serverNames").MustStringArray(),
-			PrivateKey:       inboundInfo.Get("streamSettings").Get("realitySettings").Get("privateKey").MustString(),
-			MinClientVer:     inboundInfo.Get("streamSettings").Get("realitySettings").Get("minClientVer").MustString(),
-			MaxClientVer:     inboundInfo.Get("streamSettings").Get("realitySettings").Get("maxClientVer").MustString(),
-			MaxTimeDiff:      inboundInfo.Get("streamSettings").Get("realitySettings").Get("maxTimeDiff").MustUint64(),
-			ShortIds:         inboundInfo.Get("streamSettings").Get("realitySettings").Get("shortIds").MustStringArray(),
+			Dest:             dest,
+			ProxyProtocolVer: reality.Get("xver").MustUint64(),
+			ServerNames:      reality.Get("serverNames").MustStringArray(),
+			PrivateKey:       reality.Get("privateKey").MustString(),
+			MinClientVer:     reality.Get("minClientVer").MustString(),
+			MaxClientVer:     reality.Get("maxClientVer").MustString(),
+			MaxTimeDiff:      reality.Get("maxTimeDiff").MustUint64(),
+			ShortIds:         reality.Get("shortIds").MustStringArray(),
 		}
 	}
 
