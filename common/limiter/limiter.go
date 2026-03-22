@@ -96,9 +96,9 @@ func (e *userOnlineEntry) collectOnline(out *[]api.OnlineUser) {
 type InboundInfo struct {
 	Tag            string
 	NodeSpeedLimit uint64
-	UserInfo       *sync.Map // Key: user tag (buildUserTag) -> UserInfo
-	BucketHub      *sync.Map // Key: user tag -> *rate.Limiter
-	UserOnlineIP   *sync.Map // Key: user tag -> *userOnlineEntry
+	UserInfo       *sync.Map // Key: runtime user key -> UserInfo
+	BucketHub      *sync.Map // Key: runtime user key -> *rate.Limiter
+	UserOnlineIP   *sync.Map // Key: runtime user key -> *userOnlineEntry
 	GlobalLimit    struct {
 		config         *GlobalDeviceLimitConfig
 		globalOnlineIP *marshaler.Marshaler
@@ -150,7 +150,7 @@ func (l *Limiter) AddInboundLimiter(tag string, nodeSpeedLimit uint64, userList 
 
 	userMap := new(sync.Map)
 	for _, u := range *userList {
-		userKey := fmt.Sprintf("%s|%s|%d", tag, u.Email, u.UID)
+		userKey := u.GetRuntimeKey(tag)
 		userMap.Store(userKey, UserInfo{
 			UID:         u.UID,
 			SpeedLimit:  u.SpeedLimit,
@@ -167,7 +167,7 @@ func (l *Limiter) UpdateInboundLimiter(tag string, updatedUserList *[]api.UserIn
 		inboundInfo := value.(*InboundInfo)
 		// Update User info
 		for _, u := range *updatedUserList {
-			userKey := fmt.Sprintf("%s|%s|%d", tag, u.Email, u.UID)
+			userKey := u.GetRuntimeKey(tag)
 			inboundInfo.UserInfo.Store(userKey, UserInfo{
 				UID:         u.UID,
 				SpeedLimit:  u.SpeedLimit,
@@ -247,20 +247,23 @@ func (l *Limiter) SyncAliveList(tag string, aliveList map[int][]string) error {
 			entry := value.(*userOnlineEntry)
 			userKeyStr := userKey.(string)
 
-			// Extract UID from userKey (format: "tag|email|uid")
-			parts := strings.Split(userKeyStr, "|")
-			if len(parts) != 3 {
-				return true // Skip invalid format
+			uid := 0
+			if v, ok := inboundInfo.UserInfo.Load(userKeyStr); ok {
+				uid = v.(UserInfo).UID
 			}
-			uidStr := parts[2]
+			if uid == 0 {
+				// Backward compatibility for legacy "tag|email|uid" keys.
+				parts := strings.Split(userKeyStr, "|")
+				if len(parts) == 3 {
+					uid, _ = strconv.Atoi(parts[2])
+				}
+			}
+			if uid == 0 {
+				return true
+			}
+			uidStr := strconv.Itoa(uid)
 
 			if uidStr != "" && panelIPs[uidStr] != nil {
-				// Parse UID to int for connIP struct
-				uidInt, err := strconv.Atoi(uidStr)
-				if err != nil {
-					return true // Skip if UID is not a valid integer
-				}
-
 				// Remove IPs not in panel list
 				entry.ips.Range(func(ip, val interface{}) bool {
 					ipStr := ip.(string)
@@ -274,7 +277,7 @@ func (l *Limiter) SyncAliveList(tag string, aliveList map[int][]string) error {
 				// Add IPs from panel that are missing locally
 				for ip := range panelIPs[uidStr] {
 					if _, exists := entry.ips.Load(ip); !exists {
-						entry.ips.Store(ip, connIP{UID: uidInt, LastSeen: now})
+						entry.ips.Store(ip, connIP{UID: uid, LastSeen: now})
 						atomic.AddInt32(&entry.count, 1)
 					}
 				}
@@ -336,6 +339,16 @@ func (l *Limiter) GetUserBucket(tag string, userKey string, ip string) (limiter 
 
 	errors.LogDebug(context.Background(), "Get Inbound Limiter information failed")
 	return nil, false, false
+}
+
+func (l *Limiter) GetUserInfo(tag string, userKey string) (UserInfo, bool) {
+	if value, ok := l.InboundInfo.Load(tag); ok {
+		inboundInfo := value.(*InboundInfo)
+		if v, ok := inboundInfo.UserInfo.Load(userKey); ok {
+			return v.(UserInfo), true
+		}
+	}
+	return UserInfo{}, false
 }
 
 // Global device limit

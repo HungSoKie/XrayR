@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 
 	"github.com/xtls/xray-core/infra/conf"
@@ -118,6 +119,7 @@ type NodeInfo struct {
 type UserInfo struct {
 	UID         int
 	Email       string
+	RuntimeKey  string
 	UUID        string
 	Passwd      string
 	Port        uint32
@@ -125,6 +127,17 @@ type UserInfo struct {
 	Method      string
 	SpeedLimit  uint64 // Bps
 	DeviceLimit int
+}
+
+// GetRuntimeKey returns the identifier that xray-core uses for per-user
+// runtime behavior such as stats, online IP tracking, and rate limiting.
+// For most protocols this is the managed tag form; for Socks/HTTP it is the
+// authenticated username from the inbound session.
+func (u UserInfo) GetRuntimeKey(tag string) string {
+	if u.RuntimeKey != "" {
+		return u.RuntimeKey
+	}
+	return fmt.Sprintf("%s|%s|%d", tag, u.Email, u.UID)
 }
 
 type OnlineUser struct {

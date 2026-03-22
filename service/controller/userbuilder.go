@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"strings"
 
 	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
@@ -168,7 +167,7 @@ func cipherFromString(c string) shadowsocks.CipherType {
 }
 
 func (c *Controller) buildUserTag(user *api.UserInfo) string {
-	return fmt.Sprintf("%s|%s|%d", c.Tag, user.Email, user.UID)
+	return user.GetRuntimeKey(c.Tag)
 }
 
 func (c *Controller) checkShadowsocksPassword(password string, method string) (string, error) {

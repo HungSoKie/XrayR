@@ -103,6 +103,12 @@ func (w *dataPathWrapper) Dispatch(ctx context.Context, link *transport.Link) {
 		if email != "" {
 			srcIP := sess.Source.Address.IP().String()
 			nodeTag := w.tag
+			ruleUserKey := email
+			if w.limiter != nil {
+				if info, ok := w.limiter.GetUserInfo(nodeTag, email); ok && info.UID != 0 {
+					ruleUserKey = fmt.Sprintf("%d", info.UID)
+				}
+			}
 
 			// Rule check (single pass — dispatcher no longer duplicates this)
 			if w.ruleMgr != nil {
@@ -110,7 +116,7 @@ func (w *dataPathWrapper) Dispatch(ctx context.Context, link *transport.Link) {
 				if outs := session.OutboundsFromContext(ctx); len(outs) > 0 {
 					destStr = outs[len(outs)-1].Target.String()
 				}
-				if destStr != "" && w.ruleMgr.Detect(nodeTag, destStr, email, srcIP) {
+				if destStr != "" && w.ruleMgr.Detect(nodeTag, destStr, ruleUserKey, srcIP) {
 					common.Close(link.Writer)
 					common.Interrupt(link.Reader)
 					return

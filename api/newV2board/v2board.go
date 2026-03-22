@@ -282,6 +282,9 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 			u.DeviceLimit = c.DeviceLimit
 		}
 		u.Email = u.UUID + "@v2board.user"
+		if c.NodeType == "Socks" || c.NodeType == "socks" || c.NodeType == "HTTP" || c.NodeType == "http" {
+			u.RuntimeKey = u.UUID
+		}
 		if c.NodeType == "Shadowsocks" {
 			u.Passwd = u.UUID
 		}

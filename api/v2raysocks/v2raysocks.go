@@ -273,6 +273,7 @@ func (c *APIClient) GetUserList() (UserList *[]api.UserInfo, err error) {
 			user.UUID = credential
 			user.Email = credential
 			user.Passwd = credential
+			user.RuntimeKey = credential
 			user.SpeedLimit = response.Get("data").GetIndex(i).Get("st").MustUint64() * 1000000 / 8
 			user.DeviceLimit = response.Get("data").GetIndex(i).Get("dt").MustInt()
 		}
