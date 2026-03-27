@@ -121,6 +121,12 @@ func (c *Controller) Start() error {
 	c.nodeInfo = newNodeInfo
 	c.Tag = c.buildNodeTag()
 
+	if updated, err := c.syncRemoteCertFiles(); err != nil {
+		c.logger.Printf("Startup certificate prefetch failed: %v", err)
+	} else if updated {
+		c.logger.Infof("Certificate files prefetched for %s before startup", c.config.CertConfig.CertDomain)
+	}
+
 	// Add new tag
 	err = c.addNewTag(newNodeInfo)
 	if err != nil {
@@ -199,6 +205,22 @@ func (c *Controller) Start() error {
 	}
 
 	return nil
+}
+
+func (c *Controller) syncRemoteCertFiles() (bool, error) {
+	if c.config == nil || c.config.CertConfig == nil {
+		return false, nil
+	}
+	if c.config.CertConfig.CertMode != "file" {
+		return false, nil
+	}
+
+	syncer, ok := c.apiClient.(remoteCertFileSyncer)
+	if !ok {
+		return false, nil
+	}
+
+	return syncer.SyncRemoteCertFiles(c.config.CertConfig)
 }
 
 // Close implement the Close() function of the service interface
@@ -734,13 +756,10 @@ func (c *Controller) certMonitor() error {
 				c.logger.Print(err)
 			}
 		case "file":
-			if syncer, ok := c.apiClient.(remoteCertFileSyncer); ok {
-				updated, err := syncer.SyncRemoteCertFiles(c.config.CertConfig)
-				if err != nil {
-					c.logger.Print(err)
-				} else if updated {
-					c.logger.Infof("Certificate files updated for %s; xray-core will hot-reload the new pair automatically", c.config.CertConfig.CertDomain)
-				}
+			if updated, err := c.syncRemoteCertFiles(); err != nil {
+				c.logger.Print(err)
+			} else if updated {
+				c.logger.Infof("Certificate files updated for %s; xray-core will hot-reload the new pair automatically", c.config.CertConfig.CertDomain)
 			}
 		}
 	}
