@@ -2,10 +2,13 @@ package v2raysocks
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +23,10 @@ import (
 
 	"github.com/Mtoly/XrayRP/api"
 	"github.com/Mtoly/XrayRP/common"
+	"github.com/Mtoly/XrayRP/common/mylego"
 )
+
+const remoteCertFilePerm os.FileMode = 0o600
 
 // APIClient create an api client to the panel.
 type APIClient struct {
@@ -137,6 +143,58 @@ func (c *APIClient) Debug() {
 	c.client.SetDebug(true)
 }
 
+// SyncRemoteCertFiles fetches certificate and private key PEM content from the
+// V2RaySocks panel and replaces the local file-mode certificate pair when the
+// remote content changes.
+func (c *APIClient) SyncRemoteCertFiles(certConfig *mylego.CertConfig) (bool, error) {
+	if !shouldSyncRemoteCertFiles(certConfig) {
+		return false, nil
+	}
+
+	nodeType, err := normalizeNodeTypeForRemoteCert(c.NodeType)
+	if err != nil {
+		return false, err
+	}
+
+	certBody, err := c.fetchRemoteCertBody("get_certificate", nodeType)
+	if err != nil {
+		return false, err
+	}
+	keyBody, err := c.fetchRemoteCertBody("get_key", nodeType)
+	if err != nil {
+		return false, err
+	}
+	if len(bytes.TrimSpace(certBody)) == 0 || len(bytes.TrimSpace(keyBody)) == 0 {
+		return false, nil
+	}
+
+	if _, err := tls.X509KeyPair(certBody, keyBody); err != nil {
+		return false, fmt.Errorf("invalid remote certificate or key pair for %s: %w", certConfig.CertDomain, err)
+	}
+
+	localCert, err := readExistingFile(certConfig.CertFile)
+	if err != nil {
+		return false, fmt.Errorf("read local certificate %s: %w", certConfig.CertFile, err)
+	}
+	localKey, err := readExistingFile(certConfig.KeyFile)
+	if err != nil {
+		return false, fmt.Errorf("read local key %s: %w", certConfig.KeyFile, err)
+	}
+
+	if bytes.Equal(certBody, localCert) && bytes.Equal(keyBody, localKey) {
+		return false, nil
+	}
+
+	if err := atomicWriteFile(certConfig.CertFile, certBody); err != nil {
+		return false, fmt.Errorf("write certificate file %s: %w", certConfig.CertFile, err)
+	}
+	if err := atomicWriteFile(certConfig.KeyFile, keyBody); err != nil {
+		return false, fmt.Errorf("write key file %s: %w", certConfig.KeyFile, err)
+	}
+
+	return true, nil
+}
+
 func (c *APIClient) assembleURL(path string) string {
 	return c.APIHost + path
 }
@@ -154,6 +212,98 @@ func (c *APIClient) parseResponse(res *resty.Response, path string, err error) (
 		return nil, fmt.Errorf("request %s returned invalid JSON", c.assembleURL(path))
 	}
 	return rtn, nil
+}
+
+func shouldSyncRemoteCertFiles(certConfig *mylego.CertConfig) bool {
+	if certConfig == nil {
+		return false
+	}
+	if certConfig.CertMode != "file" {
+		return false
+	}
+	return certConfig.CertDomain != "" && certConfig.CertFile != "" && certConfig.KeyFile != ""
+}
+
+func normalizeNodeTypeForRemoteCert(nodeType string) (string, error) {
+	switch strings.ToLower(nodeType) {
+	case "v2ray", "vmess", "vless":
+		return "v2ray", nil
+	case "trojan", "shadowsocks", "socks", "http":
+		return strings.ToLower(nodeType), nil
+	default:
+		return "", fmt.Errorf("unsupported Node type: %s", nodeType)
+	}
+}
+
+func (c *APIClient) fetchRemoteCertBody(act, nodeType string) ([]byte, error) {
+	res, err := c.client.R().
+		SetQueryParams(map[string]string{
+			"act":       act,
+			"node_type": nodeType,
+		}).
+		Get(c.APIHost)
+	if err != nil {
+		return nil, fmt.Errorf("request %s failed: %w", act, err)
+	}
+	if res.StatusCode() >= 400 {
+		return nil, fmt.Errorf("request %s failed: status %d", act, res.StatusCode())
+	}
+	return res.Body(), nil
+}
+
+func readExistingFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
+func atomicWriteFile(path string, data []byte) error {
+	perm, err := filePermForPath(path)
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	defer os.Remove(tmpName)
+
+	if err := tmpFile.Chmod(perm); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpName, path)
+}
+
+func filePermForPath(path string) (os.FileMode, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return remoteCertFilePerm, nil
+		}
+		return 0, err
+	}
+	return info.Mode().Perm(), nil
 }
 
 // GetNodeInfo will pull NodeInfo Config from panel

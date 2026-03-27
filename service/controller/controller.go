@@ -53,6 +53,10 @@ type periodicTask struct {
 	*task.Periodic
 }
 
+type remoteCertFileSyncer interface {
+	SyncRemoteCertFiles(certConfig *mylego.CertConfig) (bool, error)
+}
+
 // New return a Controller service with default parameters.
 func New(server *core.Instance, api api.API, config *Config, panelType string) *Controller {
 	logger := log.NewEntry(log.StandardLogger()).WithFields(log.Fields{
@@ -714,6 +718,9 @@ func (c *Controller) buildNodeTag() string {
 
 // Check Cert
 func (c *Controller) certMonitor() error {
+	if c.config == nil || c.config.CertConfig == nil {
+		return nil
+	}
 	if c.nodeInfo.EnableTLS && c.config.EnableREALITY == false {
 		switch c.config.CertConfig.CertMode {
 		case "dns", "http", "tls":
@@ -725,6 +732,15 @@ func (c *Controller) certMonitor() error {
 			_, _, _, err = lego.RenewCert()
 			if err != nil {
 				c.logger.Print(err)
+			}
+		case "file":
+			if syncer, ok := c.apiClient.(remoteCertFileSyncer); ok {
+				updated, err := syncer.SyncRemoteCertFiles(c.config.CertConfig)
+				if err != nil {
+					c.logger.Print(err)
+				} else if updated {
+					c.logger.Infof("Certificate files updated for %s; xray-core will hot-reload the new pair automatically", c.config.CertConfig.CertDomain)
+				}
 			}
 		}
 	}
