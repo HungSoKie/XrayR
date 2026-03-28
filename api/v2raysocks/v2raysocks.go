@@ -251,6 +251,58 @@ func (c *APIClient) fetchRemoteCertBody(act, nodeType string) ([]byte, error) {
 	return res.Body(), nil
 }
 
+func (c *APIClient) fetchRemotePanelConfigBody(act string) ([]byte, error) {
+	res, err := c.client.R().
+		SetQueryParam("act", act).
+		Get(c.APIHost)
+	if err != nil {
+		return nil, fmt.Errorf("request %s failed: %w", act, err)
+	}
+	if res.StatusCode() >= 400 {
+		return nil, fmt.Errorf("request %s failed: status %d", act, res.StatusCode())
+	}
+	return res.Body(), nil
+}
+
+// FetchRemotePanelConfigFiles fetches optional panel-level JSON snippets used by
+// XrayR's global DNS/routing/custom inbound/custom outbound config files.
+func (c *APIClient) FetchRemotePanelConfigFiles(opts *api.RemotePanelConfigFetchOptions) (*api.RemotePanelConfigFiles, error) {
+	if opts == nil || !opts.Any() {
+		return &api.RemotePanelConfigFiles{}, nil
+	}
+
+	files := &api.RemotePanelConfigFiles{}
+	if opts.DNS {
+		body, err := c.fetchRemotePanelConfigBody("get_dns_config_json")
+		if err != nil {
+			return nil, err
+		}
+		files.DNS = body
+	}
+	if opts.Route {
+		body, err := c.fetchRemotePanelConfigBody("get_route_config_json")
+		if err != nil {
+			return nil, err
+		}
+		files.Route = body
+	}
+	if opts.Inbound {
+		body, err := c.fetchRemotePanelConfigBody("get_inbound_config_json")
+		if err != nil {
+			return nil, err
+		}
+		files.Inbound = body
+	}
+	if opts.Outbound {
+		body, err := c.fetchRemotePanelConfigBody("get_outbound_config_json")
+		if err != nil {
+			return nil, err
+		}
+		files.Outbound = body
+	}
+	return files, nil
+}
+
 func readExistingFile(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

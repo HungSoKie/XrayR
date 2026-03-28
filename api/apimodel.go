@@ -29,6 +29,27 @@ type Config struct {
 	DisableCustomConfig bool    `mapstructure:"DisableCustomConfig"`
 }
 
+type RemotePanelConfigFetchOptions struct {
+	DNS      bool
+	Route    bool
+	Inbound  bool
+	Outbound bool
+}
+
+func (o *RemotePanelConfigFetchOptions) Any() bool {
+	if o == nil {
+		return false
+	}
+	return o.DNS || o.Route || o.Inbound || o.Outbound
+}
+
+type RemotePanelConfigFiles struct {
+	DNS      []byte
+	Route    []byte
+	Inbound  []byte
+	Outbound []byte
+}
+
 // NodeStatus Node status
 type NodeStatus struct {
 	CPU    float64

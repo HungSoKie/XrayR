@@ -199,6 +199,78 @@ func TestSyncRemoteCertFilesUpdatesLocalFiles(t *testing.T) {
 	assertFileContent(t, keyPath, remoteKey)
 }
 
+func TestFetchRemotePanelConfigFilesSkipsDisabledItems(t *testing.T) {
+	requests := 0
+	client := New(&api.Config{
+		APIHost:  "https://panel.example/web_api.php",
+		Key:      "token-key",
+		NodeID:   88,
+		NodeType: "V2ray",
+	})
+	client.client.SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		return newHTTPResponse(r, http.StatusOK, nil), nil
+	}))
+
+	files, err := client.FetchRemotePanelConfigFiles(&api.RemotePanelConfigFetchOptions{})
+	if err != nil {
+		t.Fatalf("FetchRemotePanelConfigFiles returned error: %v", err)
+	}
+	if files == nil {
+		t.Fatal("expected non-nil files payload")
+	}
+	if requests != 0 {
+		t.Fatalf("expected no remote requests, got %d", requests)
+	}
+}
+
+func TestFetchRemotePanelConfigFiles(t *testing.T) {
+	client := New(&api.Config{
+		APIHost:  "https://panel.example/web_api.php",
+		Key:      "token-key",
+		NodeID:   88,
+		NodeType: "V2ray",
+	})
+	client.client.SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.URL.Query().Get("node_id"); got != "88" {
+			t.Fatalf("unexpected node_id query value: %q", got)
+		}
+		if got := r.URL.Query().Get("token"); got != "token-key" {
+			t.Fatalf("unexpected token query value: %q", got)
+		}
+		if got := r.URL.Query().Get("node_type"); got != "" {
+			t.Fatalf("expected panel config request without node_type, got %q", got)
+		}
+
+		switch r.URL.Query().Get("act") {
+		case "get_dns_config_json":
+			return newHTTPResponse(r, http.StatusOK, []byte(`{"hosts":{"dns.test":"1.1.1.1"}}`)), nil
+		case "get_inbound_config_json":
+			return newHTTPResponse(r, http.StatusOK, []byte(`[{"tag":"custom-in","protocol":"dokodemo-door","port":12345,"settings":{"address":"127.0.0.1"}}]`)), nil
+		default:
+			t.Fatalf("unexpected act query value: %q", r.URL.Query().Get("act"))
+			return nil, nil
+		}
+	}))
+
+	files, err := client.FetchRemotePanelConfigFiles(&api.RemotePanelConfigFetchOptions{
+		DNS:     true,
+		Inbound: true,
+	})
+	if err != nil {
+		t.Fatalf("FetchRemotePanelConfigFiles returned error: %v", err)
+	}
+	if got := string(files.DNS); got != `{"hosts":{"dns.test":"1.1.1.1"}}` {
+		t.Fatalf("unexpected DNS config body: %q", got)
+	}
+	if got := string(files.Inbound); got != `[{"tag":"custom-in","protocol":"dokodemo-door","port":12345,"settings":{"address":"127.0.0.1"}}]` {
+		t.Fatalf("unexpected inbound config body: %q", got)
+	}
+	if len(files.Route) != 0 || len(files.Outbound) != 0 {
+		t.Fatal("expected untouched config items to stay empty")
+	}
+}
+
 func newCertRoundTripper(t *testing.T, certPEM, keyPEM []byte) http.RoundTripper {
 	t.Helper()
 

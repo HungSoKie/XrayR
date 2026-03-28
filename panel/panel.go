@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"dario.cat/mergo"
 	"github.com/r3labs/diff/v2"
@@ -38,14 +39,30 @@ import (
 
 // Panel Structure
 type Panel struct {
-	access       sync.Mutex
-	serverMutex  sync.RWMutex
-	serviceMutex sync.RWMutex
-	panelConfig  *Config
-	Server       *core.Instance
-	Service      []service.Service
-	Running      bool
-	logger       *log.Entry
+	access                        sync.Mutex
+	serverMutex                   sync.RWMutex
+	serviceMutex                  sync.RWMutex
+	panelConfig                   *Config
+	Server                        *core.Instance
+	Service                       []service.Service
+	Running                       bool
+	remotePanelConfigFetcher      remotePanelConfigFetcher
+	remotePanelConfigSyncStop     chan struct{}
+	remotePanelConfigSyncDone     chan struct{}
+	remotePanelConfigSyncInterval time.Duration
+	logger                        *log.Entry
+}
+
+type preparedNode struct {
+	nodeConfig       *NodesConfig
+	apiClient        api.API
+	controllerConfig *controller.Config
+	nodeType         string
+}
+
+type builtPanelRuntime struct {
+	server   *core.Instance
+	services []service.Service
 }
 
 func New(panelConfig *Config) *Panel {
@@ -182,45 +199,85 @@ func (p *Panel) Start() error {
 	p.access.Lock()
 	defer p.access.Unlock()
 	p.logger.Info("Starting panel")
-	// Load Core
-	server, err := p.loadCore(p.panelConfig)
+	preparedNodes, syncSettings, err := p.prepareNodesLocked()
 	if err != nil {
-		return fmt.Errorf("failed to load core: %w", err)
+		return err
 	}
-	if err := server.Start(); err != nil {
-		return fmt.Errorf("failed to start instance: %w", err)
-	}
-	p.serverMutex.Lock()
-	p.Server = server
-	p.serverMutex.Unlock()
 
-	// Load Nodes config
-	for _, nodeConfig := range p.panelConfig.NodesConfig {
-		var apiClient api.API
-		switch nodeConfig.PanelType {
-		case "SSpanel", "SSPanel":
-			apiClient = sspanel.New(nodeConfig.ApiConfig)
-		case "NewV2board", "V2board":
-			apiClient = newV2board.New(nodeConfig.ApiConfig)
-		case "PMpanel":
-			apiClient = pmpanel.New(nodeConfig.ApiConfig)
-		case "Proxypanel":
-			apiClient = proxypanel.New(nodeConfig.ApiConfig)
-		case "V2RaySocks":
-			apiClient = v2raysocks.New(nodeConfig.ApiConfig)
-		case "GoV2Panel":
-			apiClient = gov2panel.New(nodeConfig.ApiConfig)
-		case "BunPanel":
-			apiClient = bunpanel.New(nodeConfig.ApiConfig)
-		default:
-			return fmt.Errorf("unsupported panel type: %s", nodeConfig.PanelType)
+	if syncSettings.enabled {
+		p.logger.Infof("Remote panel config sync enabled with interval %s", syncSettings.interval)
+		if changes, err := p.syncRemotePanelConfigFilesLocked(syncSettings.fetcher); err != nil {
+			p.logger.Warnf("Startup panel config prefetch failed: %v", err)
+		} else if len(changes) > 0 {
+			p.logger.Infof("Prefetched %d panel-level config file(s) before startup", len(changes))
 		}
-		var controllerService service.Service
-		// Register controller service
+	} else if opts := p.buildRemotePanelConfigFetchOptionsLocked(); opts != nil {
+		p.logger.Infof("Remote panel config sync disabled: %s", syncSettings.reason)
+	}
+
+	runtime, err := p.buildRuntimeLocked(preparedNodes)
+	if err != nil {
+		return err
+	}
+	if err := p.startBuiltRuntimeLocked(runtime, syncSettings, true); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Close the panel
+func (p *Panel) Close() error {
+	p.access.Lock()
+	done := p.stopRemotePanelConfigSyncLocked()
+	err := p.closeRuntimeLocked()
+	p.access.Unlock()
+
+	if done != nil {
+		<-done
+	}
+	return err
+}
+
+func newAPIClient(nodeConfig *NodesConfig) (api.API, error) {
+	if nodeConfig == nil {
+		return nil, fmt.Errorf("node config is nil")
+	}
+	if nodeConfig.ApiConfig == nil {
+		return nil, fmt.Errorf("node %q api config is nil", nodeConfig.PanelType)
+	}
+
+	switch nodeConfig.PanelType {
+	case "SSpanel", "SSPanel":
+		return sspanel.New(nodeConfig.ApiConfig), nil
+	case "NewV2board", "V2board":
+		return newV2board.New(nodeConfig.ApiConfig), nil
+	case "PMpanel":
+		return pmpanel.New(nodeConfig.ApiConfig), nil
+	case "Proxypanel":
+		return proxypanel.New(nodeConfig.ApiConfig), nil
+	case "V2RaySocks":
+		return v2raysocks.New(nodeConfig.ApiConfig), nil
+	case "GoV2Panel":
+		return gov2panel.New(nodeConfig.ApiConfig), nil
+	case "BunPanel":
+		return bunpanel.New(nodeConfig.ApiConfig), nil
+	default:
+		return nil, fmt.Errorf("unsupported panel type: %s", nodeConfig.PanelType)
+	}
+}
+
+func (p *Panel) prepareNodesLocked() ([]preparedNode, remotePanelConfigSyncSettings, error) {
+	preparedNodes := make([]preparedNode, 0, len(p.panelConfig.NodesConfig))
+	for _, nodeConfig := range p.panelConfig.NodesConfig {
+		apiClient, err := newAPIClient(nodeConfig)
+		if err != nil {
+			return nil, remotePanelConfigSyncSettings{}, err
+		}
+
 		controllerConfig := getDefaultControllerConfig()
 		if nodeConfig.ControllerConfig != nil {
 			if err := mergo.Merge(controllerConfig, nodeConfig.ControllerConfig, mergo.WithOverride); err != nil {
-				return fmt.Errorf("failed to read controller config: %w", err)
+				return nil, remotePanelConfigSyncSettings{}, fmt.Errorf("failed to read controller config: %w", err)
 			}
 		}
 
@@ -249,74 +306,212 @@ func (p *Panel) Start() error {
 				}
 			}
 		}
+
 		nodeType := apiClient.Describe().NodeType
 		if nodeType == "" && nodeConfig.ApiConfig != nil {
 			nodeType = nodeConfig.ApiConfig.NodeType
 		}
-		switch {
-		case strings.EqualFold(nodeType, "Hysteria2"), strings.EqualFold(nodeType, "Hysteria"):
-			controllerService = hysteria2.New(apiClient, controllerConfig)
-		case strings.EqualFold(nodeType, "Tuic"):
-			controllerService = tuic.New(apiClient, controllerConfig)
-		case strings.EqualFold(nodeType, "AnyTLS"):
-			controllerService = anytls.New(apiClient, controllerConfig)
-		default:
-			controllerService = controller.New(server, apiClient, controllerConfig, nodeConfig.PanelType)
-		}
-		p.serviceMutex.Lock()
-		p.Service = append(p.Service, controllerService)
-		p.serviceMutex.Unlock()
 
+		preparedNodes = append(preparedNodes, preparedNode{
+			nodeConfig:       nodeConfig,
+			apiClient:        apiClient,
+			controllerConfig: controllerConfig,
+			nodeType:         nodeType,
+		})
 	}
 
-	// Start all the service
-	p.serviceMutex.RLock()
-	services := make([]service.Service, len(p.Service))
-	copy(services, p.Service)
-	p.serviceMutex.RUnlock()
+	return preparedNodes, p.resolveRemotePanelConfigSyncSettingsLocked(preparedNodes), nil
+}
 
-	for _, s := range services {
+func (p *Panel) buildRuntimeLocked(preparedNodes []preparedNode) (*builtPanelRuntime, error) {
+	server, err := p.loadCore(p.panelConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load core: %w", err)
+	}
+
+	services, err := p.buildServicesLocked(server, preparedNodes)
+	if err != nil {
+		if closeErr := server.Close(); closeErr != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+		return nil, err
+	}
+
+	return &builtPanelRuntime{server: server, services: services}, nil
+}
+
+func (p *Panel) buildServicesLocked(server *core.Instance, preparedNodes []preparedNode) ([]service.Service, error) {
+	services := make([]service.Service, 0, len(preparedNodes))
+	for _, node := range preparedNodes {
+		var controllerService service.Service
+		switch {
+		case strings.EqualFold(node.nodeType, "Hysteria2"), strings.EqualFold(node.nodeType, "Hysteria"):
+			controllerService = hysteria2.New(node.apiClient, node.controllerConfig)
+		case strings.EqualFold(node.nodeType, "Tuic"):
+			controllerService = tuic.New(node.apiClient, node.controllerConfig)
+		case strings.EqualFold(node.nodeType, "AnyTLS"):
+			controllerService = anytls.New(node.apiClient, node.controllerConfig)
+		default:
+			controllerService = controller.New(server, node.apiClient, node.controllerConfig, node.nodeConfig.PanelType)
+		}
+		services = append(services, controllerService)
+	}
+	return services, nil
+}
+
+func (p *Panel) startBuiltRuntimeLocked(runtime *builtPanelRuntime, syncSettings remotePanelConfigSyncSettings, startSyncLoop bool) error {
+	if runtime == nil || runtime.server == nil {
+		return fmt.Errorf("runtime is not initialized")
+	}
+	if err := runtime.server.Start(); err != nil {
+		if closeErr := runtime.server.Close(); closeErr != nil {
+			return errors.Join(fmt.Errorf("failed to start instance: %w", err), closeErr)
+		}
+		return fmt.Errorf("failed to start instance: %w", err)
+	}
+
+	started := make([]service.Service, 0, len(runtime.services))
+	for _, s := range runtime.services {
 		if err := s.Start(); err != nil {
-			p.logger.Errorf("Failed to start service: %v", err)
+			closeErr := closeBuiltRuntime(&builtPanelRuntime{
+				server:   runtime.server,
+				services: started,
+			})
+			if closeErr != nil {
+				return errors.Join(fmt.Errorf("failed to start service: %w", err), closeErr)
+			}
 			return fmt.Errorf("failed to start service: %w", err)
 		}
+		started = append(started, s)
+	}
+
+	runtime.services = started
+	p.serverMutex.Lock()
+	p.Server = runtime.server
+	p.serverMutex.Unlock()
+
+	p.serviceMutex.Lock()
+	p.Service = runtime.services
+	p.serviceMutex.Unlock()
+
+	if syncSettings.enabled {
+		p.remotePanelConfigFetcher = syncSettings.fetcher
+		p.remotePanelConfigSyncInterval = syncSettings.interval
+	} else {
+		p.remotePanelConfigFetcher = nil
+		p.remotePanelConfigSyncInterval = 0
 	}
 	p.Running = true
+
+	if startSyncLoop && syncSettings.enabled {
+		p.startRemotePanelConfigSyncLocked()
+	}
 	return nil
 }
 
-// Close the panel
-func (p *Panel) Close() error {
-	p.access.Lock()
-	defer p.access.Unlock()
+func closeBuiltRuntime(runtime *builtPanelRuntime) error {
+	if runtime == nil {
+		return nil
+	}
 
+	var errs []error
+	for _, s := range runtime.services {
+		if err := s.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if runtime.server != nil {
+		if err := runtime.server.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (p *Panel) closeRuntimeLocked() error {
 	p.serviceMutex.RLock()
 	services := make([]service.Service, len(p.Service))
 	copy(services, p.Service)
 	p.serviceMutex.RUnlock()
 
-	var errs []error
-	for _, s := range services {
-		if err := s.Close(); err != nil {
-			p.logger.Errorf("Failed to close service: %v", err)
-			errs = append(errs, err)
-		}
+	p.serverMutex.RLock()
+	server := p.Server
+	p.serverMutex.RUnlock()
+
+	runtime := &builtPanelRuntime{
+		server:   server,
+		services: services,
 	}
+	err := closeBuiltRuntime(runtime)
 
 	p.serviceMutex.Lock()
 	p.Service = nil
 	p.serviceMutex.Unlock()
 
 	p.serverMutex.Lock()
-	if p.Server != nil {
-		if err := p.Server.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	p.Server = nil
 	p.serverMutex.Unlock()
 
 	p.Running = false
-	return errors.Join(errs...)
+	return err
+}
+
+func (p *Panel) reloadAfterRemotePanelConfigChangeLocked(changes []remotePanelConfigFileChange) error {
+	preparedNodes, syncSettings, err := p.prepareNodesLocked()
+	if err != nil {
+		rollbackErr := rollbackRemotePanelConfigChanges(changes)
+		if rollbackErr != nil {
+			return errors.Join(fmt.Errorf("prepare runtime with new remote panel config: %w", err), rollbackErr)
+		}
+		return fmt.Errorf("prepare runtime with new remote panel config: %w", err)
+	}
+
+	newRuntime, err := p.buildRuntimeLocked(preparedNodes)
+	if err != nil {
+		rollbackErr := rollbackRemotePanelConfigChanges(changes)
+		if rollbackErr != nil {
+			return errors.Join(fmt.Errorf("build runtime with new remote panel config: %w", err), rollbackErr)
+		}
+		return fmt.Errorf("build runtime with new remote panel config: %w", err)
+	}
+
+	if err := p.closeRuntimeLocked(); err != nil {
+		p.logger.Warnf("Failed to close old runtime before remote config reload: %v", err)
+	}
+
+	startErr := p.startBuiltRuntimeLocked(newRuntime, syncSettings, false)
+	if startErr == nil {
+		return nil
+	}
+
+	rollbackErr := rollbackRemotePanelConfigChanges(changes)
+	if rollbackErr != nil {
+		p.remotePanelConfigFetcher = nil
+		p.remotePanelConfigSyncInterval = 0
+		return errors.Join(fmt.Errorf("start runtime with new remote panel config: %w", startErr), rollbackErr)
+	}
+
+	restoreNodes, restoreSync, err := p.prepareNodesLocked()
+	if err != nil {
+		p.remotePanelConfigFetcher = nil
+		p.remotePanelConfigSyncInterval = 0
+		return errors.Join(fmt.Errorf("start runtime with new remote panel config: %w", startErr), fmt.Errorf("prepare runtime after rollback: %w", err))
+	}
+
+	restoreRuntime, err := p.buildRuntimeLocked(restoreNodes)
+	if err != nil {
+		p.remotePanelConfigFetcher = nil
+		p.remotePanelConfigSyncInterval = 0
+		return errors.Join(fmt.Errorf("start runtime with new remote panel config: %w", startErr), fmt.Errorf("build runtime after rollback: %w", err))
+	}
+
+	if err := p.startBuiltRuntimeLocked(restoreRuntime, restoreSync, false); err != nil {
+		p.remotePanelConfigFetcher = nil
+		p.remotePanelConfigSyncInterval = 0
+		return errors.Join(fmt.Errorf("start runtime with new remote panel config: %w", startErr), fmt.Errorf("restore old runtime after rollback: %w", err))
+	}
+
+	return fmt.Errorf("start runtime with new remote panel config: %w", startErr)
 }
 
 func parseConnectionConfig(c *ConnectionConfig) (*conf.Policy, error) {
