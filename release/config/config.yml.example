@@ -15,7 +15,7 @@ ConnectionConfig:
 Nodes:
   - PanelType: "V2RaySocks" # Panel type: V2RaySocks
     ApiConfig:
-      ApiHost: "https://demo.v2raysocks.com/modules/addons/v2raysocks_nodes/web_api.php "
+      ApiHost: "https://demo.v2raysocks.com/modules/addons/v2raysocks_nodes/web_api.php"
       ApiKey: "123"
       NodeID: 41
       NodeType: V2ray # Node type: V2ray, Vmess, Vless, Shadowsocks, Trojan, HTTP, Socks
